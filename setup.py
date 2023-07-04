@@ -7,10 +7,10 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(
-    name='orthomason',
+    name='ortholand',
     version='0.0.0.1',
-    packages=['orthomason'],
-    url='http://github.com/heche-psb/OrthoMason',
+    packages=['ortholand'],
+    url='http://github.com/heche-psb/OrthoLand',
     license='GPL',
     author='Hengchi Chen',
     author_email='heche@psb.vib-ugent.be',
@@ -27,6 +27,6 @@ setup(
     ],
     entry_points='''
         [console_scripts]
-        orthomason=command:cli
+        ortholand=command:cli
     ''',
 )
