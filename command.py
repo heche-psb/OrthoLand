@@ -7,7 +7,7 @@ import warnings
 from timeit import default_timer as timer
 import pkg_resources
 from rich.logging import RichHandler
-__version__ = pkg_resources.require("orthomason")[0].version
+__version__ = pkg_resources.require("ortholand")[0].version
 
 
 # cli entry point
@@ -16,7 +16,7 @@ __version__ = pkg_resources.require("orthomason")[0].version
     default='info', help="Verbosity level, default = info.")
 def cli(verbosity):
     """
-    OrthoMason - Copyright (C) 2023-2024 Hengchi Chen\n
+    OrthoLand - Copyright (C) 2023-2024 Hengchi Chen\n
     Contact: heche@psb.vib-ugent.be
     """
     logging.basicConfig(
@@ -24,7 +24,7 @@ def cli(verbosity):
         handlers=[RichHandler()],
         datefmt='%H:%M:%S',
         level=verbosity.upper())
-    logging.info("This is OrthoMason v{}".format(__version__))
+    logging.info("This is OrthoLand v{}".format(__version__))
     pass
 
 
@@ -49,10 +49,11 @@ def find(**kwargs):
     _find(**kwargs)
 
 def _find(data,gff3,features,attributes,config_gff3,tmpdir,outdir,to_stop,cds,evalue,nthreads,iadhore_options):
-    from orthomason.ortho import cdsortho,syninfer
+    from ortholand.ortho import cdsortho,syninfer,synseedortho
     start = timer()
     gsmap,dmd_pairwise_outfiles=cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads)
-    syninfer(gsmap,dmd_pairwise_outfiles,iadhore_options,gff3,features,attributes,outdir,config=config_gff3)
+    aps=syninfer(gsmap,dmd_pairwise_outfiles,iadhore_options,gff3,features,attributes,outdir,config=config_gff3)
+    synseedortho(aps,outdir,gsmap)
     end = timer()
     logging.info("Total run time: {}s".format(int(end-start)))
 

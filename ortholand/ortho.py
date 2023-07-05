@@ -3,6 +3,12 @@ import uuid
 import logging
 from Bio import SeqIO
 import subprocess as sp
+import pandas as pd
+from scipy import stats
+import numpy as np
+import sys
+
+sys.setrecursionlimit(1000000)
 
 def _mkdir(dirname):
     if not os.path.isdir(dirname) :
@@ -19,7 +25,7 @@ def listdir(data):
 
 def writepepfile(fn,tmpdir,to_stop,cds):
     fname = os.path.join(tmpdir,os.path.basename(fn))
-    gsmap = {}
+    gsmap,gldict = {},{}
     with open(fname,'w') as f:
         for record in SeqIO.parse(fn, 'fasta'):
             if not (gsmap.get(record.id) is None):
@@ -27,47 +33,65 @@ def writepepfile(fn,tmpdir,to_stop,cds):
                 exit(1)
             gsmap[record.id] = os.path.basename(fn)
             aa_seq = record.translate(to_stop=to_stop, cds=cds, id=record.id)
+            gldict[record.id] = len(aa_seq)
             f.write(">{0}\n{1}\n".format(record.id,aa_seq.seq))
-    return fname,gsmap
+    return fname,gsmap,gldict
 
 def writepep(data,tmpdir,outdir,to_stop,cds):
     logging.info("Translating cds to pep")
-    parent,pep_paths,gsmaps = os.getcwd(),[],[]
+    parent,pep_paths,gsmaps,gldicts = os.getcwd(),[],{},{}
     if tmpdir is None: tmpdir = "tmp_" + str(uuid.uuid4())
     _mkdir(tmpdir)
     fnames_seq = listdir(data)
     for fn in fnames_seq:
-        pep_path,gsmap = writepepfile(fn,tmpdir,to_stop,cds)
+        pep_path,gsmap,gldict = writepepfile(fn,tmpdir,to_stop,cds)
         pep_paths.append(pep_path)
         before_ge = len(gsmaps)
         gsmaps.update(gsmap)
+        gldicts.update(gldict)
         after_ge = len(gsmaps)
         if after_ge-before_ge != len(gsmap):
             logging.error("Identical gene id found in {} with other sequence files".format(os.path.basename(fn)))
             exit(1)
-    return pep_paths,tmpdir,gsmaps
+    return pep_paths,tmpdir,gsmaps,gldicts
 
 def mkdb(pep_path,nthreads):
     cmd = ["diamond", "makedb", "--in", pep_path , "-d", pep_path, "-p", str(nthreads)]
     out = sp.run(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
     logging.debug(out.stderr.decode())
 
-def pairdiamond(pep_path,pep_path_db,nthreads,evalue,outdir):
+def addgl(outfile,gldict):
+    df = pd.read_csv(outfile,header=None,index_col=None,sep='\t')
+    df[12] = [gldict[g1]*gldict[g2] for g1,g2 in zip(df[0],df[1])]
+    return df
+
+def addnormscore(df):
+    # Here I used overall hits without subdividing bins
+    slope, intercept, r, p, se = stats.linregress(np.log10(df[12]), np.log10(df[11]))
+    df[13] = [j/(pow(10, intercept)*(l**slope)) for j,l in zip(df[11],df[12])]
+    return df
+
+def pairdiamond(pep_path,pep_path_db,nthreads,evalue,outdir,gldict):
     dmd_folder = _mkdir(os.path.join(outdir,"diamond_results"))
-    outfile = os.path.join(dmd_folder,"__".join([os.path.basename(pep_path),os.path.basename(pep_path)]) + ".tsv")
+    outfile = os.path.join(dmd_folder,"__".join([os.path.basename(pep_path),os.path.basename(pep_path_db)[:-5]]) + ".tsv")
+    logging.info("{0} vs. {1}".format(os.path.basename(pep_path),os.path.basename(pep_path_db)[:-5]))
     cmd = ["diamond", "blastp", "-d", pep_path_db, "-q", pep_path, "-e", str(evalue), "-o", outfile, "-p", str(nthreads)]
     out = sp.run(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
+    df = addgl(outfile,gldict)
+    df = addnormscore(df)
+    norm_outfile = outfile[:-4]+".norm.tsv"
+    df.to_csv(norm_outfile,header=False,index=False,sep='\t')
     logging.debug(out.stderr.decode())
-    return outfile
+    return norm_outfile
 
-def pairwise_diamond(pep_paths,evalue,nthreads,outdir):
+def pairwise_diamond(pep_paths,evalue,nthreads,outdir,gldict):
     pep_path_dbs,outfiles = [i+'.dmnd' for i in pep_paths],{}
-    logging.info("Running diamond")
+    logging.info("Running diamond and normalization")
     for pep_path in pep_paths: mkdb(pep_path,nthreads)
     for pep_path in pep_paths:
         for pep_path_db in pep_path_dbs:
             s1,s2=os.path.basename(pep_path),os.path.basename(pep_path_db)[:-5]
-            outfiles["__".join(sorted([s1,s2]))]=pairdiamond(pep_path,pep_path_db,nthreads,evalue,outdir)
+            outfiles["__".join(sorted([s1,s2]))]=pairdiamond(pep_path,pep_path_db,nthreads,evalue,outdir,gldict)
     return outfiles
 
 def cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads):
@@ -83,13 +107,15 @@ def cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads):
     :param nthreads: The number of threads to use, default 4.
     """
     _mkdir(outdir)
-    pep_paths,tmppath,gsmap = writepep(data,tmpdir,outdir,to_stop,cds)
-    dmd_pairwise_outfiles = pairwise_diamond(pep_paths,evalue,nthreads,outdir,gsmaps)
+    pep_paths,tmppath,gsmap,gldict = writepep(data,tmpdir,outdir,to_stop,cds)
+    dmd_pairwise_outfiles = pairwise_diamond(pep_paths,evalue,nthreads,outdir,gldict)
+    logging.info("Diamond done")
     rmalltmp(tmppath)
     return gsmap,dmd_pairwise_outfiles
 
-def syninfer(gsmap,dmd_pairwise_outfiles,parameters,gff3s,features,attributes,outdir):
-    pairwise_iadhore(gsmap,dmd_pairwise_outfiles,parameters,gff3s,features,attributes,outdir)
+def syninfer(gsmap,dmd_pairwise_outfiles,parameters,gff3s,features,attributes,outdir,config=None):
+    aps=pairwise_iadhore(gsmap,dmd_pairwise_outfiles,parameters,gff3s,features,attributes,outdir,config=config)
+    return aps
 
 def rmalltmp(tmppath):
     sp.run(['rm',tmppath,'-r'])
@@ -131,15 +157,6 @@ def writegenelist(gff_info,dir_out):
 
 def writepair_iadhoreconf(sp_i,sp_j,gene_lists_i,gene_lists_j,parameters,dirname,pathbt):
     fname = os.path.join(dirname,"iadhore.conf")
-    with open(fname,"w") as f:
-        f.write("genome={}\n".format(sp_i))
-        for scaf,path in gene_lists_i.items(): f.write(scaf+" "+path+"\n")
-        f.write("\n")
-        f.write("genome={}\n".format(sp_j))
-        for scaf,path in gene_lists_j.items(): f.write(scaf+" "+path+"\n")
-        f.write("\n")
-        f.write("blast_table={}".format(pathbt))
-        f.write("output_path={}".format(os.path.abspath(dirname)+"/iadhore-out"))
     para_dict = {"gap_size":30,"q_value":0.75,"cluster_gap":35,"prob_cutoff":0.01,"anchor_points":3,"alignment_method":"gg2","level_2_only":"false","multiple_hypothesis_correction":"FDR","visualizeGHM":"false","visualizeAlignment":"false"}
     if not (parameters is None):
         # "gap_size=30;q_value=0.75"
@@ -148,21 +165,28 @@ def writepair_iadhoreconf(sp_i,sp_j,gene_lists_i,gene_lists_j,parameters,dirname
             if para_dict.get(key.strip()) is None:
                 logging.error("The parameter {} is not included in i-adhore! Plesae double check".format(key.strip()))
             else: para_dict[key.strip()]=value.strip()
-    with open(fname,"a") as f:
-        for key,value in para_dict.items(): f.write(key,"=",str(value))
+    with open(fname,"w") as f:
+        for key,value in para_dict.items(): f.write(key+"="+str(value)+"\n")
+        f.write("genome={}\n".format(sp_i))
+        for scaf,path in gene_lists_i.items(): f.write(scaf+" "+path+"\n")
+        f.write("\n")
+        f.write("genome={}\n".format(sp_j))
+        for scaf,path in gene_lists_j.items(): f.write(scaf+" "+path+"\n")
+        f.write("\n")
+        f.write("blast_table={}\n".format(pathbt))
+        f.write("output_path={}\n".format(os.path.abspath(dirname)+"/iadhore-out"))
     return fname
 
 def writeblastable(dmdtable,fname):
     df = pd.read_csv(dmdtable,header=None,index_col=None,sep='\t')
-    for g1,g2 in zip(df[0],df[1]):
-        with open(fname,"w") as f:
-            f.write(g1+"\t"+g2+"\n")
+    with open(fname,"w") as f:
+        for g1,g2 in zip(df[0],df[1]): f.write(g1+"\t"+g2+"\n")
     return os.path.abspath(fname)
 
 def run_adhore(config_file):
     cmd = sp.run(['i-adhore', config_file], stderr=sp.PIPE, stdout=sp.PIPE)
     logging.warning(cmd.stderr.decode('utf-8'))
-    logging.info(completed.stdout.decode('utf-8'))
+    logging.info(cmd.stdout.decode('utf-8'))
 
 def getgffinfo(config):
     gff3s,features,attributes=[],[],[]
@@ -182,18 +206,71 @@ def pairwise_iadhore(gsmap,dmd_pairwise_outfiles,parameters,gff3s,features,attri
     gff_infos,gene_lists,sps = {},{},{} # sp follow the fname of sequence
     if not (config is None):
         gff3s,features,attributes=getgffinfo(config)
+    logging.info("Writing genelists for i-adhore")
     for gff3,feature,attribute in zip(gff3s,features,attributes):
         splist_dir = _mkdir(os.path.join(main_wd,os.path.basename(gff3)+"_genelists"))
-        gff_info,sp = gff2table(gff3,feature,attribute)
+        gff_info,sp = gff2table(gff3,feature,attribute,gsmap)
         sps[os.path.basename(gff3)] = sp
         gff_infos[os.path.basename(gff3)] = gff_info
         gene_lists[os.path.basename(gff3)] = writegenelist(gff_info,splist_dir)
+    logging.info("Running i-adhore")
+    aps = {}
     for i in range(len(gff3s)):
         for j in range(i,len(gff3s)):
             key_i,key_j = os.path.basename(gff3s[i]),os.path.basename(gff3s[j])
             sp_i,sp_j,gene_lists_i,gene_lists_j = sps[key_i],sps[key_j],gene_lists[key_i],gene_lists[key_j]
-            dirname = _mkdir(os.path.join(main_wd,"__".join(sorted[sp_i,sp_j])))
+            logging.info("{0} vs. {1}".format(sp_i,sp_j))
+            dirname = _mkdir(os.path.join(main_wd,"__".join(sorted([sp_i,sp_j]))))
             pathbt = writeblastable(dmd_pairwise_outfiles["__".join(sorted([sp_i,sp_j]))],os.path.join(dirname,"blast_table.txt"))
             fconf = writepair_iadhoreconf(sp_i,sp_j,gene_lists_i,gene_lists_j,parameters,dirname,pathbt)
             run_adhore(fconf)
+            #aps["__".join(sorted([sp_i,sp_j]))] = os.path.join(dirname,"iadhore-out","anchorpoints.txt")
+            aps[(sp_i,sp_j)] = os.path.join(dirname,"iadhore-out","anchorpoints.txt")
+    logging.info("I-adhore done")
+    return aps
+
+def mergefirst(first,value,final_list):
+    value.remove(first)
+    for g1,g2 in value:
+        if g1 in first or g2 in first:
+            first = list(set([g for g in first] + [g1,g2]))
+            value.remove((g1,g2))
+    final_list.append(first)
+    if len(value) <= 1:
+        return final_list
+    else:
+        return mergefirst(value[0],value,final_list)
+
+def _label_families(df):
+    df.index = ["GF{:0>8}".format(i+1) for i in range(len(df.index))]
+
+def writeseedog(pair,final_list,outdir,gsmap):
+    OGs = []
+    for og in final_list:
+        OG = {sp:"" for sp in set(gsmap.values())}
+        for g in og:
+            s = gsmap[g]
+            OG[s] = g if OG[s]=="" else ", ".join([OG[s],g])
+        OGs.append(OG)
+    df = pd.DataFrame.from_dict(OGs)
+    _label_families(df)
+    fname = os.path.join(outdir,"{0}_{1}_Seed_SynOrtho.tsv".format(pair[0],pair[1]))
+    df.to_csv(fname,header=True,index=True,sep='\t')
+
+def mergeso(value):
+    final_list = mergefirst(value[0],value,[])
+    return final_list
+
+def synseedortho(aps,outdir,gsmap):
+    Seed_Orthos = {key:[] for key in aps.keys()}
+    for key,value in aps.items():
+        df = pd.read_csv(value,header=0,index_col=0,sep='\t')
+        df['gene_xy'] = ["__".join(sorted([gx,gy])) for gx,gy in zip(df['gene_x'],df['gene_y'])]
+        df = df.drop_duplicates(subset=['gene_xy'])
+        for gx,gy in zip(df['gene_x'],df['gene_y']): Seed_Orthos[key].append((gx,gy)) # in case "__" in original gene id
+    Seed_Orthos = {key:mergeso(value) for key,value in Seed_Orthos.items()}
+    logging.info("Writing seed syntenic orthofamilies")
+    for key,value in Seed_Orthos.items():
+        if key[0] != key[1]: writeseedog(key,value,outdir,gsmap)
+
 

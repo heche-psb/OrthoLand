@@ -23,7 +23,9 @@ setup(
        'biopython==1.76',
        'click==7.1.2',
        'pandas<=1.4.4',
-       'scipy<=1.5.4'
+       'scipy<=1.5.4',
+       'rich==12.5.1',
+       'numpy>=1.19.0',
     ],
     entry_points='''
         [console_scripts]
