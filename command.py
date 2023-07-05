@@ -49,11 +49,12 @@ def find(**kwargs):
     _find(**kwargs)
 
 def _find(data,gff3,features,attributes,config_gff3,tmpdir,outdir,to_stop,cds,evalue,nthreads,iadhore_options):
-    from ortholand.ortho import cdsortho,syninfer,synseedortho
+    from ortholand.ortho import cdsortho,syninfer,synseedortho,addortho
     start = timer()
     gsmap,dmd_pairwise_outfiles=cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads)
     aps=syninfer(gsmap,dmd_pairwise_outfiles,iadhore_options,gff3,features,attributes,outdir,config=config_gff3)
-    synseedortho(aps,outdir,gsmap)
+    seedf,aplist=synseedortho(aps,outdir,gsmap)
+    addortho(seedf,dmd_pairwise_outfiles,gsmap,outdir,aplist)
     end = timer()
     logging.info("Total run time: {}s".format(int(end-start)))
 

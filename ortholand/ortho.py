@@ -7,8 +7,9 @@ import pandas as pd
 from scipy import stats
 import numpy as np
 import sys
+import itertools
 
-sys.setrecursionlimit(1000000)
+sys.setrecursionlimit(10000000)
 
 def _mkdir(dirname):
     if not os.path.isdir(dirname) :
@@ -88,8 +89,9 @@ def pairwise_diamond(pep_paths,evalue,nthreads,outdir,gldict):
     pep_path_dbs,outfiles = [i+'.dmnd' for i in pep_paths],{}
     logging.info("Running diamond and normalization")
     for pep_path in pep_paths: mkdb(pep_path,nthreads)
-    for pep_path in pep_paths:
-        for pep_path_db in pep_path_dbs:
+    for i,pep_path in enumerate(pep_paths):
+        for j in range(i,len(pep_paths)):
+            pep_path_db = pep_path_dbs[j]
             s1,s2=os.path.basename(pep_path),os.path.basename(pep_path_db)[:-5]
             outfiles["__".join(sorted([s1,s2]))]=pairdiamond(pep_path,pep_path_db,nthreads,evalue,outdir,gldict)
     return outfiles
@@ -185,8 +187,8 @@ def writeblastable(dmdtable,fname):
 
 def run_adhore(config_file):
     cmd = sp.run(['i-adhore', config_file], stderr=sp.PIPE, stdout=sp.PIPE)
-    logging.warning(cmd.stderr.decode('utf-8'))
-    logging.info(cmd.stdout.decode('utf-8'))
+    logging.debug(cmd.stderr.decode('utf-8'))
+    logging.debug(cmd.stdout.decode('utf-8'))
 
 def getgffinfo(config):
     gff3s,features,attributes=[],[],[]
@@ -225,7 +227,7 @@ def pairwise_iadhore(gsmap,dmd_pairwise_outfiles,parameters,gff3s,features,attri
             fconf = writepair_iadhoreconf(sp_i,sp_j,gene_lists_i,gene_lists_j,parameters,dirname,pathbt)
             run_adhore(fconf)
             #aps["__".join(sorted([sp_i,sp_j]))] = os.path.join(dirname,"iadhore-out","anchorpoints.txt")
-            aps[(sp_i,sp_j)] = os.path.join(dirname,"iadhore-out","anchorpoints.txt")
+            aps[(sp_i,sp_j)] = os.path.join(dirname,"iadhore-out","multiplicon_pairs.txt")
     logging.info("I-adhore done")
     return aps
 
@@ -254,23 +256,94 @@ def writeseedog(pair,final_list,outdir,gsmap):
         OGs.append(OG)
     df = pd.DataFrame.from_dict(OGs)
     _label_families(df)
-    fname = os.path.join(outdir,"{0}_{1}_Seed_SynOrtho.tsv".format(pair[0],pair[1]))
+    fname = os.path.join(outdir,"{0}_{1}_Seed_SynFam.tsv".format(pair[0],pair[1]))
     df.to_csv(fname,header=True,index=True,sep='\t')
+    logging.info("The path is {}".format(fname))
+    return fname
 
 def mergeso(value):
     final_list = mergefirst(value[0],value,[])
     return final_list
 
 def synseedortho(aps,outdir,gsmap):
-    Seed_Orthos = {key:[] for key in aps.keys()}
+    Seed_Orthos,OA_Orthos,aplist = {key:[] for key in aps.keys()},[],[]
     for key,value in aps.items():
-        df = pd.read_csv(value,header=0,index_col=0,sep='\t')
+        #df = pd.read_csv(value,header=0,index_col=0,sep='\t')
+        df = pd.read_csv(value,sep="\t",index_col=0)
+        if len(df.columns) == 5: df = df.drop(columns=['gene_y']).rename(columns = {'gene_x':'gene_y'}).rename(columns = {'Unnamed: 2':'gene_x'})
         df['gene_xy'] = ["__".join(sorted([gx,gy])) for gx,gy in zip(df['gene_x'],df['gene_y'])]
         df = df.drop_duplicates(subset=['gene_xy'])
-        for gx,gy in zip(df['gene_x'],df['gene_y']): Seed_Orthos[key].append((gx,gy)) # in case "__" in original gene id
-    Seed_Orthos = {key:mergeso(value) for key,value in Seed_Orthos.items()}
+        if key[0]!=key[1]: aplist += list(df['gene_xy'])
+        OA_Orthos += [(gx,gy) for gx,gy in zip(df['gene_x'],df['gene_y'])]
+        #for gx,gy in zip(df['gene_x'],df['gene_y']): Seed_Orthos[key].append((gx,gy)) # in case "__" in original gene id
+    #Seed_Orthos = {key:mergeso(value) for key,value in Seed_Orthos.items()}
+    OA_Orthos = mergeso(OA_Orthos)
     logging.info("Writing seed syntenic orthofamilies")
-    for key,value in Seed_Orthos.items():
-        if key[0] != key[1]: writeseedog(key,value,outdir,gsmap)
+    seedf = writeseedog(("Ortho","Inpara"),OA_Orthos,outdir,gsmap)
+    return seedf,aplist
+    #for key,value in Seed_Orthos.items():
+    #    if key[0] != key[1]: writeseedog(key,value,outdir,gsmap)
 
+#def besthitcf(sp,gs,pair_bit):
+#    for gs
+
+def getallgs(d):
+    Gs = []
+    for gs in d:
+        for g in gs.split(", "):
+            Gs.append(g)
+    return Gs
+
+def adhomosf(pair_bit,seedf,gsmap,aplist):
+    cutoffs = {}
+    y = lambda x,z: next(i for i in x if i!=z)
+    yy = lambda x: (x,gsmap[x])
+    for i in seedf.index:
+        d = seedf.loc[i,:].dropna()
+        if len(d) == 1:
+            continue
+        cutoff = min([pair_bit["__".join(sorted([x,y]))] for x,y in itertools.product(*(j.split(", ") for j in d)) if "__".join(sorted([x,y])) in aplist])
+        #scores = []
+        #for x,y in itertools.product(*(j.split(", ") for j in d)):
+        #    if "__".join(sorted([x,y])) not in aplist: continue
+        #    score = pair_bit.get("__".join(sorted([x,y])),0)
+        #    if score == 0:
+        #        logging.info("Can't find score for {0} in {1}".format("__".join(sorted([x,y])),i))
+        #        continue
+        #    scores.append(score)
+        #cutoff = min(scores)
+        logging.info("cutoff for {0} is {1:.5f}".format(i,cutoff))
+        #cutoff = set((pair_bit.get("__".join(sorted([x,y])),0) for x,y in itertools.product(*(j.split(", ") for j in d))))
+        #if 0 in cutoff: cutoff.remove(0)
+        #if len(cutoff) == 0:
+        #    logging.info("Can't find diamond score in {}".format(i))
+        #    continue
+        #cutoff = min(cutoff)
+        cutoffs[i] = cutoff
+        for g in getallgs(d):
+            #orthos = (yy(y(key.split("__"),g)) for key,value in pair_bit.items() if g in key and value >= cutoff and g+"__"+g!=key)
+            orthos = (yy(key.replace(g,'').replace('__','')) for key,value in pair_bit.items() if g in key and value >= cutoff and g+"__"+g!=key)
+            for ortho,sp in orthos:
+                if ortho in chain_iter(p.split(', ') for p in seedf[sp].dropna()): continue
+                #if ortho in seedf.loc[i,sp]: continue
+                seedf.loc[i,sp] = ", ".join([seedf.loc[i,sp],ortho])
+    return seedf
+
+def chain_iter(item):
+    for i in item:
+        for j in i:
+            yield j
+
+def addortho(seedfn,dmd_pairwise_outfiles,gsmap,outdir,aplist):
+    seedf = pd.read_csv(seedfn,header=0,index_col=0,sep='\t')
+    logging.info("Initial expanding syntenic orthofamilies")
+    pair_bit, y = {}, lambda x:(x[0],x[1],x[13])
+    for fn in dmd_pairwise_outfiles.values():
+        df = pd.read_csv(fn,header=None,index_col=None,sep='\t')
+        pair_bit.update({"__".join(sorted([g1,g2])):s for g1,g2,s in zip(df[0],df[1],df[13])})
+        #pair_bit.update({"__".join(sorted([g1,g2])):s for g1,g2,s in zip(*y(pd.read_csv(fn,header=None,index_col=None,sep='\t')))})
+    addhomoseedf = adhomosf(pair_bit,seedf,gsmap,aplist)
+    fname = os.path.join(outdir,"Ortho_Inpara_Seed_SynFam_IniExpand.tsv")
+    addhomoseedf.to_csv(fname,header=True,index=True,sep='\t')
+    logging.info("The path is {}".format(fname))
 
