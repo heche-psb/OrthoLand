@@ -31,32 +31,31 @@ def cli(verbosity):
 # Find fossils
 @cli.command(context_settings={'help_option_names': ['-h', '--help']})
 @click.argument('data', type=click.Path(exists=True))
-@click.option('--gff3', '-g', multiple=True, default=None, show_default=True, help='path to gff3 files if available')
-@click.option('--features', '-f', multiple=True, default=None, show_default=True, help='features to retrieve gene id')
-@click.option('--attributes', '-a', multiple=True, default=None, show_default=True, help='attributes to retrieve gene id')
 @click.option('--config_gff3', '-cg', default=None, show_default=True, help='configure file of gff3 if available')
 @click.option('--tmpdir', '-tm', default=None, show_default=True, help='temporary working directory')
 @click.option('--outdir', '-o', default='find_ortho', show_default=True, help='output directory')
 @click.option('--to_stop', is_flag=True, help="don't translate through STOP codons")
 @click.option('--cds', is_flag=True, help="enforce proper CDS sequences")
+@click.option('--prot', is_flag=True, help="provided pep instead of cds sequences")
 @click.option('--evalue', '-e', default=1e-10, help="e-value cut-off for similarity")
 @click.option('--nthreads', '-n', default=4, show_default=True,help="number of threads to use")
 @click.option('--iadhore_options', '-io', default=None, show_default=True,help="parameters in i-adhore")
+@click.option('--pfam_dbhmm', default=None, show_default=True,help='profile for pfam hmm profile')
 def find(**kwargs):
     """
     Find orthologues
     """
     _find(**kwargs)
 
-def _find(data,gff3,features,attributes,config_gff3,tmpdir,outdir,to_stop,cds,evalue,nthreads,iadhore_options):
-    from ortholand.ortho import cdsortho,syninfer,synseedortho,addortho
+def _find(data,config_gff3,tmpdir,outdir,to_stop,cds,prot,evalue,nthreads,iadhore_options,pfam_dbhmm):
+    from ortholand.ortho import cdsortho,syn_net,precluster_rbhfilter,mcl_cluster
     start = timer()
-    gsmap,dmd_pairwise_outfiles=cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads)
-    aps=syninfer(gsmap,dmd_pairwise_outfiles,iadhore_options,gff3,features,attributes,outdir,config=config_gff3)
-    seedf,aplist=synseedortho(aps,outdir,gsmap)
-    addortho(seedf,dmd_pairwise_outfiles,gsmap,outdir,aplist)
+    gsmap,dmd_pairwise_outfiles,pep_paths,RBHs,tmpdir=cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads,prot)
+    if not (config_gff3 is None): syn_net(nthreads,dmd_pairwise_outfiles,iadhore_options,outdir,config_gff3)
+    precluster_rbhfilter(RBHs,dmd_pairwise_outfiles,tmpdir,nthreads)
+    mcl_cluster(dmd_pairwise_outfiles,outdir)
     end = timer()
-    logging.info("Total run time: {}s".format(int(end-start)))
+    logging.info("Total run time: {} min".format(round((end-start)/60,2)))
 
 if __name__ == '__main__':
     cli()

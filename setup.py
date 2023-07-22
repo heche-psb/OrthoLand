@@ -26,6 +26,9 @@ setup(
        'scipy<=1.5.4',
        'rich==12.5.1',
        'numpy>=1.19.0',
+       'joblib==0.11',
+       'networkx==3.1',
+       'tqdm==4.65.0',
     ],
     entry_points='''
         [console_scripts]
