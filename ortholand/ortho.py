@@ -555,7 +555,7 @@ class connectpairs:
 
     def processdf_getedge(self,df,g_i,g_j,ctf,G):
         df_i = pd.concat([df[df[0]==g_i],df[df[1]==g_i],df[df[0]==g_j],df[df[1]==g_j]])
-        df_ii = df_i[df_i[13]>=ctf]
+        df_ii = df_i[df_i[13]>=ctf].drop_duplicates()
         G.add_weighted_edges_from([(x,y,z) for x,y,z in zip(df_ii[0],df_ii[1],df_ii[13])])
         return G
 
@@ -586,15 +586,9 @@ class connectpairs:
     def filterhits_pairwise_heuristic(self,dmd_fs_or,postfix=".FRBH"):
         dmd_fs = {key:pd.read_csv(value,header=None,index_col=None,sep='\t',usecols=[0,1,13]) for key,value in dmd_fs_or.items()}
         RM_list = {key:set() for key in dmd_fs.keys()}
-        new_ctfs = []
-        for r in trange(self.Df.shape[0]):
-            series = self.Df.loc[r,:].dropna()
-            ctf_boundary = series[-1]
-            ctf_range = (0,ctf_boundary)
-            result = minimize_scalar(lambda x: -self.calculate_property(series,dmd_fs,x), bounds=ctf_range, method='bounded')
-            new_ctfs.append(result.x)
-            #logging.debug("Best cutoff for local network {0} is {1} instead of {2}".format(r,result.x,ctf_boundary))
-        rm_listss = Parallel(n_jobs=self.nthreads,backend='multiprocessing',batch_size=500)(delayed(self.Parallel_row)(self.Df.loc[r,:].dropna(),dmd_fs,new_ctfs[r]) for r in trange(self.Df.shape[0]))
+        new_ctfs = Parallel(n_jobs=self.nthreads,backend='multiprocessing',batch_size=500)(delayed(self.get_newctfs)(self.Df.loc[r,:].dropna(),dmd_fs) for r in trange(self.Df.shape[0]))
+        New_ctfs = [new_ctf for new_ctf in new_ctfs]
+        rm_listss = Parallel(n_jobs=self.nthreads,backend='multiprocessing',batch_size=500)(delayed(self.Parallel_row)(self.Df.loc[r,:].dropna(),dmd_fs,New_ctfs[r]) for r in trange(self.Df.shape[0]))
         for rm_lists in rm_listss:
             for rl in rm_lists: RM_list[rl[0]].update(rl[1])
         dmd_fs = {key:dmd_fs[key].drop(list(value)) for key,value in RM_list.items()}
@@ -604,13 +598,17 @@ class connectpairs:
         if postfix == ".FRBH":
             for key,value in dmd_fs_or.items(): dmd_fs[key].to_csv(value+postfix,header=False,index=False,sep='\t')
 
+    def get_newctfs(self,series,dmd_fs):
+        ctf_boundary = series[-1]
+        ctf_range = (0,ctf_boundary)
+        result = minimize_scalar(lambda x: -self.calculate_property(series,dmd_fs,x), bounds=ctf_range, method='bounded')
+        return result.x
+
     def calculate_property(self,series,dmd_fs,ctf):
         y = lambda x,y:"__".join(sorted([x,y]))
-        N,identifier,N_edges,Nodes = len(series) - 1,[],0,set()
-        G = nx.Graph()
+        N,identifier,G = len(series) - 1,[],nx.Graph()
         for i in range(N):
-            for j in range(i+1,N):
-                identifier.append((i,j))
+            for j in range(i+1,N): identifier.append((i,j))
         for i,j in identifier:
             s_i,s_j,g_i,g_j = series.index[i],series.index[j],series[i],series[j]
             G = self.processdf_getedge(dmd_fs[y(s_i,s_j)],g_i,g_j,ctf,G)

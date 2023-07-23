@@ -7,10 +7,10 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(
-    name='ortholand',
+    name='cognate',
     version='0.0.0.1',
     packages=['ortholand'],
-    url='http://github.com/heche-psb/OrthoLand',
+    url='http://github.com/heche-psb/cognate',
     license='GPL',
     author='Hengchi Chen',
     author_email='heche@psb.vib-ugent.be',
@@ -32,6 +32,6 @@ setup(
     ],
     entry_points='''
         [console_scripts]
-        ortholand=command:cli
+        cognate=command:cli
     ''',
 )
