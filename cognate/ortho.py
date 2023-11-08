@@ -354,13 +354,17 @@ class mergeallF:
     def drop_duplicates(self):
         self.dmd_fs_merge = {}
         y = lambda x:os.path.join(*x.split("/")[:-2],"i-adhore","syntelog",os.path.basename(x))
-        for key,value in self.dmd_fs.items():
-            df_RBH = self.readf(value+".FRBH")
-            if self.syn:
-                df_SYN = self.readf(y(value)+".FSYN")
-                df_RBH.merge(df_SYN).to_csv(value+".ABC",header=False,index=False,sep='\t')
-            else: df_RBH.to_csv(value+".ABC",header=False,index=False,sep='\t')
-            self.dmd_fs_merge[key] = value+".ABC"
+        if not self.syn:
+            for key,value in self.dmd_fs.items(): self.dmd_fs_merge[key] = value + ".FRBH"
+        else:
+            for key,value in self.dmd_fs.items():
+                if not os.path.exists(y(value)+".FSYN"):
+                    self.dmd_fs_merge[key] = value + ".FRBH"
+                else:
+                    df_RBH = self.readf(value+".FRBH")
+                    df_SYN = self.readf(y(value)+".FSYN")
+                    df_RBH.merge(df_SYN).to_csv(value+".ABC",header=False,index=False,sep='\t')
+                    self.dmd_fs_merge[key] = value+".ABC"
 
     def concat(self):
         cmd = ["cat"] + [fn for fn in self.dmd_fs_merge.values()]
@@ -661,7 +665,10 @@ class connectpairs:
 
     def filterhits_pairwise_heuristic(self,dmd_fs_or,postfix=".FRBH"):
         if self.Df.shape[0] == 0:
-            logging.info("No seed families were found")
+            if postfix==".FRBH":
+                logging.info("No RBHs seed families were found")
+            else:
+                logging.info("No syntenic seed families were found")
             return
         dmd_fs = {key:pd.read_csv(value,header=None,index_col=None,sep='\t',usecols=[0,1,13]) for key,value in dmd_fs_or.items()}
         RM_list = {key:set() for key in dmd_fs.keys()}
