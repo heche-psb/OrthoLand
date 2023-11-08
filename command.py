@@ -7,7 +7,7 @@ import warnings
 from timeit import default_timer as timer
 import pkg_resources
 from rich.logging import RichHandler
-__version__ = pkg_resources.require("ortholand")[0].version
+__version__ = pkg_resources.require("cognate")[0].version
 
 
 # cli entry point
@@ -16,7 +16,7 @@ __version__ = pkg_resources.require("ortholand")[0].version
     default='info', help="Verbosity level, default = info.")
 def cli(verbosity):
     """
-    OrthoLand - Copyright (C) 2023-2024 Hengchi Chen\n
+    cognate - Copyright (C) 2023-2024 Hengchi Chen\n
     Contact: heche@psb.vib-ugent.be
     """
     logging.basicConfig(
@@ -24,11 +24,10 @@ def cli(verbosity):
         handlers=[RichHandler()],
         datefmt='%H:%M:%S',
         level=verbosity.upper())
-    logging.info("This is OrthoLand v{}".format(__version__))
+    logging.info("This is cognate v{}".format(__version__))
     pass
 
 
-# Find fossils
 @cli.command(context_settings={'help_option_names': ['-h', '--help']})
 @click.argument('data', type=click.Path(exists=True))
 @click.option('--config_gff3', '-cg', default=None, show_default=True, help='configure file of gff3 if available')
@@ -48,12 +47,14 @@ def find(**kwargs):
     _find(**kwargs)
 
 def _find(data,config_gff3,tmpdir,outdir,to_stop,cds,prot,evalue,nthreads,iadhore_options,pfam_dbhmm):
-    from ortholand.ortho import cdsortho,syn_net,precluster_rbhfilter,mcl_cluster
-    start = timer()
+    from cognate.ortho import cdsortho,syn_net,precluster_rbhfilter,mcl_cluster
+    start,syn = timer(),False
     gsmap,dmd_pairwise_outfiles,pep_paths,RBHs,tmpdir=cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads,prot)
-    if not (config_gff3 is None): syn_net(nthreads,dmd_pairwise_outfiles,iadhore_options,outdir,config_gff3)
+    if not (config_gff3 is None):
+        syn_net(nthreads,dmd_pairwise_outfiles,iadhore_options,outdir,config_gff3)
+        syn = True
     precluster_rbhfilter(RBHs,dmd_pairwise_outfiles,tmpdir,nthreads)
-    mcl_cluster(dmd_pairwise_outfiles,outdir)
+    mcl_cluster(dmd_pairwise_outfiles,outdir,syn)
     end = timer()
     logging.info("Total run time: {} min".format(round((end-start)/60,2)))
 

@@ -24,14 +24,22 @@ def _mkdir(dirname):
     return dirname
 
 def listdir(data):
+    """
+    Return the path to sequence files in a list
+    """
     parent = os.getcwd()
     os.chdir(data)
     y = lambda x:os.path.join(data,x)
     files_clean = [y(i) for i in os.listdir() if i!="__pycache__"]
+    logging.info("In total {} sequence files are found".format(len(files_clean)))
+    logging.info(", ".join([os.path.basename(i) for i in files_clean]))
     os.chdir(parent)
     return files_clean
 
 def writepepfile(fn,tmpdir,to_stop,cds,protein):
+    """
+    Return file names of translated cds or given pep, map file and gene length dict for normalization
+    """
     fname = os.path.join(tmpdir,os.path.basename(fn))
     gsmap,gldict = {},{}
     with open(fname,'w') as f:
@@ -46,7 +54,7 @@ def writepepfile(fn,tmpdir,to_stop,cds,protein):
     return fname,gsmap,gldict
 
 def writepep(data,tmpdir,outdir,to_stop,cds,protein):
-    if not protein: logging.info("Translating cds to pep")
+    if not protein: logging.info("Checking cds files")
     else: logging.info("Checking protein files")
     parent,pep_paths,gsmaps,gldicts = os.getcwd(),[],{},{}
     if tmpdir is None: tmpdir = "tmp_" + str(uuid.uuid4())
@@ -93,7 +101,10 @@ def pairdiamond(pep_path,pep_path_db,nthreads,evalue,outdir,gldict):
     logging.debug(out.stderr.decode())
     return norm_outfile
 
-def multi_pairdiamond(i,j,pep_path_dbs,pep_path,nthreads,evalue,outdir,gldict):
+def multi_pairdiamond(j,pep_path_dbs,pep_path,nthreads,evalue,outdir,gldict):
+    """
+    Return a dict with key as s1__s2 and value as norm outfile
+    """
     pep_path_db = pep_path_dbs[j]
     s1,s2=os.path.basename(pep_path),os.path.basename(pep_path_db)[:-5]
     d = {"__".join(sorted([s1,s2])):pairdiamond(pep_path,pep_path_db,nthreads,evalue,outdir,gldict)}
@@ -105,8 +116,8 @@ def pairwise_diamond(pep_paths,evalue,nthreads,outdir,gldict):
     for pep_path in pep_paths: mkdb(pep_path,nthreads)
     idenfiers = []
     for i,pep_path in enumerate(pep_paths):
-        for j in range(i,len(pep_paths)): idenfiers.append((i,j,pep_path))
-    ds = Parallel(n_jobs=nthreads,backend='multiprocessing')(delayed(multi_pairdiamond)(i,j,pep_path_dbs,pep_path,nthreads,evalue,outdir,gldict) for i,j,pep_path in idenfiers)
+        for j in range(i,len(pep_paths)): idenfiers.append((j,pep_path))
+    ds = Parallel(n_jobs=nthreads,backend='multiprocessing')(delayed(multi_pairdiamond)(j,pep_path_dbs,pep_path,nthreads,evalue,outdir,gldict) for j,pep_path in idenfiers)
     for d in ds: outfiles.update(d)
     return outfiles
 
@@ -121,6 +132,7 @@ def cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads,prot):
     :param cds: Whether to only translate the complete CDS, default False.
     :param evalue: The e-value cut-off for similarity, default 1e-10.
     :param nthreads: The number of threads to use, default 4.
+    :param prot: Input as protein data instead of cds, default False.
     """
     _mkdir(outdir)
     pep_paths,tmppath,gsmap,gldict = writepep(data,tmpdir,outdir,to_stop,cds,prot)
@@ -150,6 +162,21 @@ def get_rbhs(dmd_pairwise_outfiles,tmppath,gsmap):
         Processor_DMD(fn,outpath=y(spair_list),gs_map=gsmap).write_rbh()
         RBHs[spair]=y(spair_list)
     return RBHs
+
+def loop_until_nomore(Df,df):
+    Orig_num = Df.shape[0]
+    gene_pools = set([g1 for g1 in Df[0]]) | set([g2 for g2 in Df[1]])
+    for gene in gene_pools: Df = pd.concat([df[df[0] == gene],df[df[1] == gene],Df]).drop_duplicates()
+    if Orig_num == Df.shape[0]:
+        return Df
+    else:
+        return loop_until_nomore(Df,df)
+
+def getalledges(gene1,gene2,df,ctf):
+    Df = pd.concat([df[df[0] == gene1],df[df[1] == gene1],df[df[0] == gene2],df[df[1] == gene2]]).drop_duplicates()
+    Df = loop_until_nomore(Df,df)
+    edges = [(g1,g2,score) for g1,g2,score in zip(Df[0],Df[1],Df[13]) if score >= ctf]
+    return edges
 
 class Processor_DMD:
     """
@@ -305,8 +332,8 @@ def multi_run_adhore(i,j,gff3s,sps,gene_lists,main_wd,dmd_pairwise_outfiles,para
     run_adhore(fconf)
     return {(sp_i,sp_j):os.path.join(dirname,"iadhore-out","multiplicon_pairs.txt")}
 
-def mcl_cluster(dmd_pairwise_outfiles,outdir):
-    ABC = mergeallF(dmd_pairwise_outfiles,outdir)
+def mcl_cluster(dmd_pairwise_outfiles,outdir,syn):
+    ABC = mergeallF(dmd_pairwise_outfiles,outdir,syn)
     ABC.drop_duplicates()
     ABC.concat()
     mcl(ABC.ABC).run_mcl()
@@ -315,9 +342,10 @@ class mergeallF:
     """
     Merge all filtered hits
     """
-    def __init__(self,dmd_pairwise_outfiles,outdir):
+    def __init__(self,dmd_pairwise_outfiles,outdir,syn):
         self.dmd_fs = dmd_pairwise_outfiles
         self.wd = _mkdir(os.path.join(outdir,"MCL"))
+        self.syn = syn
 
     def readf(self,fn):
         df = pd.read_csv(fn,header=None,index_col=None,sep='\t')
@@ -327,8 +355,11 @@ class mergeallF:
         self.dmd_fs_merge = {}
         y = lambda x:os.path.join(*x.split("/")[:-2],"i-adhore","syntelog",os.path.basename(x))
         for key,value in self.dmd_fs.items():
-            df_RBH,df_SYN = self.readf(value+".FRBH"),self.readf(y(value)+".FSYN")
-            df_RBH.merge(df_SYN).to_csv(value+".ABC",header=False,index=False,sep='\t')
+            df_RBH = self.readf(value+".FRBH")
+            if self.syn:
+                df_SYN = self.readf(y(value)+".FSYN")
+                df_RBH.merge(df_SYN).to_csv(value+".ABC",header=False,index=False,sep='\t')
+            else: df_RBH.to_csv(value+".ABC",header=False,index=False,sep='\t')
             self.dmd_fs_merge[key] = value+".ABC"
 
     def concat(self):
@@ -540,9 +571,27 @@ class connectpairs:
                 column_on = self.splist[i] if i == 0 else [self.splist[i],self.splist[j]]
                 Df = df if Df is None else Df.merge(df,how='outer',on=column_on)
         for r in range(Df.shape[0]):
-            Scores.append(min([value for key,value in Df.loc[r,:].dropna().items() if key.startswith("Score_")]))
+            min1 = min([value for key,value in Df.loc[r,:].dropna().items() if key.startswith("Score_")])
+            #for key,value in Df.loc[r,:].dropna().items():
+            #    if key.startswith("Score_"): continue
+            #    Df_tmp = Df[Df[key]==value]
+            #    for indice in Df_tmp.index:
+            #        min1 = min([value2 for key2,value2 in Df_tmp.loc[indice,:].dropna().items() if key2.startswith("Score_")] + [min1])
+                #min2 = min([Df_tmp[c]..values[0] for c in Df_tmp.columns if c.startswith("Score_")])
+                #min2 = min([value2 for key2,value2 in Df_tmp.items() if key2.startswith("Score_")])
+                #min1 = min([min1,min2])
+            Scores.append(min1)
+            #Scores.append(min([value for key,value in Df.loc[r,:].dropna().items() if key.startswith("Score_")]))
         Df.drop(columns=[c for c in Df.columns if c.startswith("Score_")],inplace=True)
         Df["Score"] = Scores
+        # Here I rm all duplicated seed orthologues per sp
+        #Rm_list = set()
+        #for c in Df.columns[:-1]:
+        #    df_tmp = Df[c].dropna()
+        #    df_tmp_rm = df_tmp.drop_duplicates()
+        #    rm_list = set(df_tmp.index)-set(df_tmp_rm.index)
+        #    Rm_list.update(rm_list)
+        #Df = Df.drop(list(Rm_list))
         self.Df = Df
         return Df
 
@@ -554,8 +603,15 @@ class connectpairs:
         return set(df_i[df_i[13]<ctf].index)
 
     def processdf_getedge(self,df,g_i,g_j,ctf,G):
-        df_i = pd.concat([df[df[0]==g_i],df[df[1]==g_i],df[df[0]==g_j],df[df[1]==g_j]])
-        df_ii = df_i[df_i[13]>=ctf].drop_duplicates()
+        df_i = pd.concat([df[df[0]==g_i],df[df[1]==g_i],df[df[0]==g_j],df[df[1]==g_j]]).drop_duplicates()
+        df_ii = df_i[df_i[13]>=ctf]
+        # Here under I add the possible edges between one-step neighbor
+        other_genes = list(set(list(df_ii[0])+list(df_ii[1])) - set([g_i,g_j]))
+        for (x, y) in itertools.product(other_genes, other_genes):
+            if x==y: continue
+            df_tmp = pd.concat([df[(df[0]==x) & (df[1]==y)],df[(df[1]==x) & (df[0]==y)]]).drop_duplicates()
+            df_tmp = df_tmp[df_tmp[13]>=ctf]
+            df_ii = pd.concat([df_ii,df_tmp])
         G.add_weighted_edges_from([(x,y,z) for x,y,z in zip(df_ii[0],df_ii[1],df_ii[13])])
         return G
 
@@ -570,6 +626,13 @@ class connectpairs:
             rm_lists.append((y(s_i,s_j),self.processdff(dmd_fs[y(s_i,s_j)],g_i,g_j,ctf)))
         return rm_lists
 
+    def Parallel_row_whole(self,series,dmd_fs,ctf):
+        y = lambda x,y:"__".join(sorted([x,y]))
+        rm_lists = []
+        for i,g in enumerate(series):
+            Df_reduced = pd.concat([self.wholedf[self.wholedf[0]==g],self.wholedf[self.wholedf[1]==g]]).drop_duplicates() if i == 0 else pd.concat([Df_reduced[Df_reduced[0]==g],Df_reduced[Df_reduced[1]==g]])
+        return set(Df_reduced[Df_reduced[13]<ctf].index)
+
     def filterhits_pairwise(self,dmd_fs_or,postfix=".FRBH"):
         dmd_fs = {key:pd.read_csv(value,header=None,index_col=None,sep='\t',usecols=[0,1,13]) for key,value in dmd_fs_or.items()}
         RM_list = {key:set() for key in dmd_fs.keys()}
@@ -583,37 +646,103 @@ class connectpairs:
         if postfix == ".FRBH":
             for key,value in dmd_fs_or.items(): dmd_fs[key].to_csv(value+postfix,header=False,index=False,sep='\t')
 
+    def filterhits_pairwise_whole(self,dmd_fs_or,postfix=".FRBH"):
+        dmd_fs = {key:pd.read_csv(value,header=None,index_col=None,sep='\t',usecols=[0,1,13]) for key,value in dmd_fs_or.items()}
+        self.wholedf,RM_list = pd.concat(dmd_fs.values()),set()
+        rm_listss = Parallel(n_jobs=self.nthreads,backend='multiprocessing',batch_size=500)(delayed(self.Parallel_row_whole)(self.Df.loc[r,:].dropna(),dmd_fs,self.Df.loc[r,:].dropna()[-1]) for r in trange(self.Df.shape[0]))
+        for rm_lists in rm_listss: RM_list.update(rm_lists)
+        self.wholedf = self.wholedf.drop(list(RM_list))
+        if postfix == ".FSYN":
+            y = lambda x:os.path.join(*x.split("/")[:-2],"i-adhore","syntelog","Syn_Concat_Score.tsv")
+            self.wholedf.to_csv(y(dmd_fs_or.values[0]),header=False,index=False,sep='\t')
+        if postfix == ".FRBH":
+            y = lambda x:os.path.join(*x.split("/")[:-1],"RBH_Concat_Score.tsv")
+            self.wholedf.to_csv(y(dmd_fs_or.values[0]),header=False,index=False,sep='\t')
+
     def filterhits_pairwise_heuristic(self,dmd_fs_or,postfix=".FRBH"):
+        if self.Df.shape[0] == 0:
+            logging.info("No seed families were found")
+            return
         dmd_fs = {key:pd.read_csv(value,header=None,index_col=None,sep='\t',usecols=[0,1,13]) for key,value in dmd_fs_or.items()}
         RM_list = {key:set() for key in dmd_fs.keys()}
-        new_ctfs = Parallel(n_jobs=self.nthreads,backend='multiprocessing',batch_size=500)(delayed(self.get_newctfs)(self.Df.loc[r,:].dropna(),dmd_fs) for r in trange(self.Df.shape[0]))
-        New_ctfs = [new_ctf for new_ctf in new_ctfs]
+        #new_ctfs = Parallel(n_jobs=self.nthreads,backend='multiprocessing',batch_size=500)(delayed(self.get_newctfs)(self.Df.loc[r,:].dropna(),dmd_fs) for r in trange(self.Df.shape[0]))
+        #New_ctfs = [new_ctf for new_ctf in new_ctfs]
+        New_ctfs = []
+        logging.info("First calculating the optimal preclustering cut-off per seed familiy")
+        for r in trange(self.Df.shape[0]): New_ctfs.append(self.get_newctfs(self.Df.loc[r,:].dropna(),dmd_fs))
+        logging.info("Second dropping edges given the optimal preclustering cut-off per seed familiy")
         rm_listss = Parallel(n_jobs=self.nthreads,backend='multiprocessing',batch_size=500)(delayed(self.Parallel_row)(self.Df.loc[r,:].dropna(),dmd_fs,New_ctfs[r]) for r in trange(self.Df.shape[0]))
         for rm_lists in rm_listss:
             for rl in rm_lists: RM_list[rl[0]].update(rl[1])
         dmd_fs = {key:dmd_fs[key].drop(list(value)) for key,value in RM_list.items()}
+        sum_dropped = 0
+        for value in RM_list.values(): sum_dropped += len(value)
+        logging.info("Dropping in total {} edges".format(sum_dropped))
         if postfix == ".FSYN":
             y = lambda x:os.path.join(*x.split("/")[:-2],"i-adhore","syntelog",os.path.basename(x))
             for key,value in dmd_fs_or.items(): dmd_fs[key].to_csv(y(value)+postfix,header=False,index=False,sep='\t')
+            self.Df["Optimal_ctf"] = New_ctfs
+            self.writedf(self.Df,"Syn.Net.Optimal")
+            #df_score = pd.DafaFrame(data={'Seed-family':["SF{:0>8}".format(i+1) for i in range(New_ctfs)],'Cut-off':New_ctfs}).set_index('Seed-family')
         if postfix == ".FRBH":
             for key,value in dmd_fs_or.items(): dmd_fs[key].to_csv(value+postfix,header=False,index=False,sep='\t')
+            self.Df["Optimal_ctf"] = New_ctfs
+            self.writedf(self.Df,"Joined.RBH.Optimal")
 
     def get_newctfs(self,series,dmd_fs):
         ctf_boundary = series[-1]
         ctf_range = (0,ctf_boundary)
-        result = minimize_scalar(lambda x: -self.calculate_property(series,dmd_fs,x), bounds=ctf_range, method='bounded')
+        gene_list,sp_list = [i for i in series[:-1]], [i for i in series.index[:-1]]
+        #ctf_range = (ctf_boundary*0.5,ctf_boundary)
+        N,identifier,G = len(series) - 1,[],nx.Graph()
+        y = lambda x,y:"__".join(sorted([x,y]))
+        Ctfs = {}
+        # Here I only consider local optimal ctf for each species pair, abandoned
+        for i in range(N):
+            for j in range(i+1,N): identifier.append((i,j))
+        Final_ctf = self.global_ctf_per_fam(N,identifier,gene_list,sp_list,ctf_boundary,ctf_range,dmd_fs)
+        #for i,j in identifier:
+        #    s_i,s_j,g_i,g_j = series.index[i],series.index[j],series[i],series[j]
+        #    result = minimize_scalar(lambda x: -self.calculate_property_onepair(g_i,g_j,dmd_fs[y(s_i,s_j)],x), bounds=ctf_range, method='bounded')
+        #    Ctfs[(i,j)] = result.x
+            #result = minimize_scalar(lambda x: -self.calculate_property(series,dmd_fs,x), bounds=ctf_range, method='bounded')
+        # Hereafter I consider a global optimal ctf per family, which might consume more CPU but less loop
+        return Final_ctf
+
+    def global_ctf_per_fam(self,N,identifier,gene_list,sp_list,ctf_boundary,ctf_range,dmd_fs):
+        # First get the whole local network, not just the one-step neighbor
+        y = lambda x1,x2: "__".join(sorted([x1,x2]))
+        result = minimize_scalar(lambda x: -self.calculate_property_wholelocanet(gene_list,dmd_fs,sp_list,identifier,x,y), bounds=ctf_range, method='bounded')
         return result.x
+
+    def calculate_property_wholelocanet(self,gene_list,dmd_fs,sp_list,identifier,ctf,y):
+        edges_list = Parallel(n_jobs=self.nthreads,backend='multiprocessing')(delayed(getalledges)(gene_list[i],gene_list[j],dmd_fs[y(sp_list[i],sp_list[j])],ctf) for i,j in identifier)
+        Edges = []
+        for edges in edges_list: Edges += edges
+        G = nx.Graph()
+        G.add_weighted_edges_from([(x,y,z) for x,y,z in Edges])
+        CC = nx.closeness_centrality(G)
+        ACC = sum(CC.values())/len(G)
+        return ACC
+
+    def calculate_property_onepair(self,g_i,g_j,df,ctf):
+        G = nx.Graph()
+        G = self.processdf_getedge(df,g_i,g_j,ctf,G)
+        CC = nx.closeness_centrality(G)
+        ACC = sum(CC.values())/len(G)
+        return ACC
 
     def calculate_property(self,series,dmd_fs,ctf):
         y = lambda x,y:"__".join(sorted([x,y]))
         N,identifier,G = len(series) - 1,[],nx.Graph()
         for i in range(N):
             for j in range(i+1,N): identifier.append((i,j))
+        # Here I change it into global Dfs for just one ctf
         for i,j in identifier:
             s_i,s_j,g_i,g_j = series.index[i],series.index[j],series[i],series[j]
             G = self.processdf_getedge(dmd_fs[y(s_i,s_j)],g_i,g_j,ctf,G)
-        CC = nx.closeness_centrality(G)
-        ACC = sum(CC.values())/len(G)
+            CC = nx.closeness_centrality(G)
+            ACC = sum(CC.values())/len(G)
         return ACC
 
 
@@ -634,6 +763,8 @@ def precluster_rbhfilter(RBHs,dmd_pairwise_outfiles,tmpdir,nthreads):
     ConnectPair = connectpairs(RBHs,tmpdir,nthreads)
     ConnectPair.writedf(ConnectPair.mergedf(),"Joined.RBH")
     logging.info("Discarding low-similarity edges")
+    #ConnectPair.filterhits_pairwise_whole(dmd_pairwise_outfiles)
+    #ConnectPair.filterhits_pairwise(dmd_pairwise_outfiles)
     ConnectPair.filterhits_pairwise_heuristic(dmd_pairwise_outfiles)
 
 def precluster_bhfilter(BHs,dmd_pairwise_outfiles,tmpdir,nthreads):
