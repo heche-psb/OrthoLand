@@ -861,7 +861,7 @@ class connectpairs:
         concathmm(self.jointrbh_hmm_paths,self.concathmm)
         self.run_scan()
         self.get_ctf()
-        self.writedf(self.Df,"Joined.RBH.HMM")
+        self.writedf(self.Df_hmm,"Joined.RBH.HMM")
 
     def get_ctf(self):
         f_g_score = {fid:{} for fid in self.famids}
@@ -888,7 +888,8 @@ class connectpairs:
                 cutoff_per_f[famid] = 0
             else: cutoff_per_f[famid] = min(scores)*0.9
         for famid,cutoff in cutoff_per_f.items(): logging.info('The cutoff score for family {} is {:.2f}'.format(famid,cutoff))
-        self.Df["HMM_score"] = [j for i,j in sorted(cutoff_per_f.items(),key=lambda x:x[0])]
+        self.Df_hmm = self.Df.copy()
+        self.Df_hmm["HMM_score"] = [j for i,j in sorted(cutoff_per_f.items(),key=lambda x:x[0])]
 
     def run_scan(self):
         self.hmm_outfiles = []
