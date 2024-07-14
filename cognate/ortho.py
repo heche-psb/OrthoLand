@@ -948,9 +948,9 @@ def precluster_rbhfilter(RBHs,dmd_pairwise_outfiles,outdir,nthreads,evalue,pep_p
     ConnectPair = connectpairs(RBHs,tmpdir,nthreads,evalue,pep_paths,outdir)
     ConnectPair.mergedf()
     ConnectPair.writedf(ConnectPair.Df,"Joined.RBH")
+    ConnectPair.buildhmm()
     logging.info("Discarding low-similarity edges")
     concatf = ConnectPair.filterhits_pairwise_whole(dmd_pairwise_outfiles)
-    ConnectPair.buildhmm()
     return concatf
     #ConnectPair.filterhits_pairwise(dmd_pairwise_outfiles)
     #ConnectPair.filterhits_pairwise_heuristic(dmd_pairwise_outfiles)
