@@ -1,0 +1,2 @@
+[console_scripts]
+cognate = command:cli

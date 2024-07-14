@@ -1,0 +1,11 @@
+LICENSE
+README.md
+command.py
+setup.py
+cognate/ortho.py
+cognate.egg-info/PKG-INFO
+cognate.egg-info/SOURCES.txt
+cognate.egg-info/dependency_links.txt
+cognate.egg-info/entry_points.txt
+cognate.egg-info/requires.txt
+cognate.egg-info/top_level.txt

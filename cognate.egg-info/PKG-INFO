@@ -1,0 +1,12 @@
+Metadata-Version: 2.1
+Name: cognate
+Version: 0.0.0.1
+Summary: Python package and CLI for finding orthologues
+Home-page: http://github.com/heche-psb/cognate
+Author: Hengchi Chen
+Author-email: heche@psb.vib-ugent.be
+License: GPL
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
+# cognate

@@ -9,7 +9,7 @@ with open("README.md", "r") as fh:
 setup(
     name='cognate',
     version='0.0.0.1',
-    packages=['ortholand'],
+    packages=['cognate'],
     url='http://github.com/heche-psb/cognate',
     license='GPL',
     author='Hengchi Chen',
