@@ -97,7 +97,6 @@ def writepep(data,tmpdir,outdir,to_stop,cds,protein):
 def mkdb(pep_path,nthreads):
     cmd = ["diamond", "makedb", "--in", pep_path , "-d", pep_path, "-p", str(nthreads)]
     out = sp.run(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
-    logging.debug(out.stderr.decode())
 
 def addgl(outfile,gldict):
     df = pd.read_csv(outfile,header=None,index_col=None,sep='\t')
@@ -120,7 +119,6 @@ def pairdiamond(pep_path,pep_path_db,nthreads,evalue,outdir,gldict):
     df = addnormscore(df)
     norm_outfile = outfile[:-4]+".norm.tsv"
     df.to_csv(norm_outfile,header=False,index=False,sep='\t')
-    logging.debug(out.stderr.decode())
     return norm_outfile
 
 def multi_pairdiamond(pep_path_db,pep_path,nthreads,evalue,outdir,gldict):
@@ -600,13 +598,14 @@ class connectpairs:
     """
     Function of connecting gene pairs based on overlapped genes
     """
-    def __init__(self,RBHs,tmpdir,nthreads,evalue,pep_paths,outdir):
+    def __init__(self,RBHs,tmpdir,nthreads,evalue,pep_paths,outdir,alnoptions):
         self.RBHs = RBHs
         self.tmpdir = tmpdir
         self.nthreads = nthreads
         self.evalue = evalue
         self.pep_paths = pep_paths
         self.outdir = outdir
+        self.alnoptions = alnoptions
 
     def readdf(self,fname):
         df = pd.read_csv(fname,header=0,index_col=None,sep='\t')
@@ -909,7 +908,7 @@ class connectpairs:
         self.jointrbh_mafft_paths = [i+'.aln' for i in self.jointrbh_seq_paths]
         self.jointrbh_hmm_paths = [i+'.aln.hmm' for i in self.jointrbh_seq_paths]
         for i,j,k in zip(self.jointrbh_seq_paths,self.jointrbh_mafft_paths,self.jointrbh_hmm_paths):
-            mafft_cmd(i,'--auto',j)
+            mafft_cmd(i,self.alnoptions,j)
             cmdhmmbuild(j,k)
 
     def allneededseq(self):
@@ -943,10 +942,10 @@ def Catalldmd(fs,outf):
     cmd = ["rm"] + [f for f in f_simples]
     sp.run(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
 
-def precluster_rbhfilter(RBHs,dmd_pairwise_outfiles,outdir,nthreads,evalue,pep_paths):
+def precluster_rbhfilter(RBHs,dmd_pairwise_outfiles,outdir,nthreads,evalue,pep_paths,alnoptions):
     tmpdir = _mkdir(os.path.join(outdir,"MCL"))
     logging.info("Connecting RBH seed orthologues")
-    ConnectPair = connectpairs(RBHs,tmpdir,nthreads,evalue,pep_paths,outdir)
+    ConnectPair = connectpairs(RBHs,tmpdir,nthreads,evalue,pep_paths,outdir,alnoptions)
     ConnectPair.mergedf()
     ConnectPair.writedf(ConnectPair.Df,"Joined.RBH")
     ConnectPair.buildhmm()
@@ -1140,9 +1139,10 @@ def addortho(seedfn,dmd_pairwise_outfiles,gsmap,outdir,aplist,nthreads):
     return fname
 
 def mafft_cmd(fpep,o,fpaln):
-    cmd = ["mafft"] + o.split() + ["--amino", fpep]
+    cmd = ["mafft"] + o.split(",") + ["--amino", fpep]
     out = sp.run(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
     with open(fpaln, 'w') as f: f.write(out.stdout.decode('utf-8'))
+    logging.debug(out.stderr.decode())
 
 def run_hmmerbp(ids,fp,Seqs):
     with open(fp,'w') as f:

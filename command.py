@@ -40,6 +40,7 @@ def cli(verbosity):
 @click.option('--evalue', '-e', default=1e-10, help="e-value cut-off for similarity")
 @click.option('--nthreads', '-n', default=4, show_default=True,help="number of threads to use")
 @click.option('--iadhore_options', '-io', default=None, show_default=True,help="parameters in i-adhore")
+@click.option('--alnoptions', default='--auto', show_default=True,help='comma-separated options for aligner')
 @click.option('--pfam_dbhmm', default=None, show_default=True,help='profile for pfam hmm profile')
 def find(**kwargs):
     """
@@ -47,7 +48,7 @@ def find(**kwargs):
     """
     _find(**kwargs)
 
-def _find(data,config_gff3,tmpdir,outdir,to_stop,cds,prot,onlybhs,evalue,nthreads,iadhore_options,pfam_dbhmm):
+def _find(data,config_gff3,tmpdir,outdir,to_stop,cds,prot,onlybhs,evalue,nthreads,iadhore_options,alnoptions,pfam_dbhmm):
     from cognate.ortho import cdsortho,syn_net,precluster_rbhfilter,mcl_cluster,rmalltmp
     start,syn = timer(),False
     gsmap,dmd_pairwise_outfiles,pep_paths,BHs,RBHs,tmpdir=cdsortho(data,tmpdir,outdir,to_stop,cds,evalue,nthreads,prot)
@@ -56,7 +57,7 @@ def _find(data,config_gff3,tmpdir,outdir,to_stop,cds,prot,onlybhs,evalue,nthread
     if not (config_gff3 is None):
         syn_net(nthreads,dmd_pairwise_outfiles,iadhore_options,outdir,config_gff3)
         syn = True
-    concatf = precluster_rbhfilter(RBHs,dmd_pairwise_outfiles,outdir,nthreads,evalue,pep_paths)
+    concatf = precluster_rbhfilter(RBHs,dmd_pairwise_outfiles,outdir,nthreads,evalue,pep_paths,alnoptions)
     mcl_cluster(dmd_pairwise_outfiles,outdir,syn,concatf=concatf)
     rmalltmp(tmpdir)
     end = timer()
